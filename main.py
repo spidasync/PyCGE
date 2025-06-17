@@ -22,7 +22,7 @@ faces = [
     (0,1,3,2), (4,5,7,6), (0,1,5,4), (2,3,7,6), (0,2,6,4), (1,3,7,5)
 ]
 
-def project(point, size, fov, distance=0.001):
+def project(point, size, fov, distance=0.008):
     x,y,z = point
     if distance + z == 0:
         return None
@@ -39,6 +39,10 @@ class FPSApp:
         self.root = root
         self.root.title("Untitled Game Engine")
 
+        # Enable double buffering
+        self.root.update_idletasks()
+        self.root.attributes('-alpha', 1.0)
+
         # Dark style
         self.dark_bg = "#000000"
         self.light_fg = "#eee"
@@ -50,12 +54,23 @@ class FPSApp:
         style.map('TButton', background=[('active', self.dark_bg)])
         
         # Settings variables
-        self.rot_sens = tk.DoubleVar(value=0.05)
+        self.rot_sens = tk.DoubleVar(value=0.04)
         self.move_speed = tk.DoubleVar(value=0.1)
         self.gravity = tk.DoubleVar(value=0.007)
         self.jump_strength = tk.DoubleVar(value=0.15)
         self.fov = tk.DoubleVar(value=1.0)
         self.bg_color = self.dark_bg
+        
+        # Performance settings
+        self.target_fps = 60
+        self.frame_time = 1.0 / self.target_fps
+        self.last_frame = 0
+        self.frame_count = 0
+        self.last_fps_update = 0
+        self.current_fps = 0
+        
+        # Pre-calculate cube vertices for each cube
+        self.cube_cache = {}
 
         # Layout: canvas + control panel
         container = ttk.Frame(root)
@@ -218,43 +233,84 @@ class FPSApp:
         z = sx*dy + cx*z
         return (x,y,z)
 
+    def _update_cube_cache(self):
+        # Update cached projections if FOV changed
+        current_fov = self.fov.get()
+        if not hasattr(self, '_last_fov') or self._last_fov != current_fov:
+            self.cube_cache.clear()
+            self._last_fov = current_fov
+
     def _draw(self):
+        now = time.time()
+        
+        # Control frame rate
+        if now - self.last_frame < self.frame_time:
+            return
+        
+        # Update FPS counter
+        self.frame_count += 1
+        if now - self.last_fps_update >= 1.0:
+            self.current_fps = self.frame_count / (now - self.last_fps_update)
+            self.frame_count = 0
+            self.last_fps_update = now
+        
+        self.last_frame = now
+        
+        # Clear canvas efficiently
         self.canvas.delete("all")
+        
+        # Update cube cache if needed
+        self._update_cube_cache()
+        
         factor = 400
-        for cube in self.cubes:
-            pts = [self._to_camera((v[0]+cube[0], v[1]+cube[1], v[2]+cube[2])) for v in vertices]
-            pts2 = [project(p, factor, self.fov.get()) if p[2]>0.05 else None for p in pts]
-            # Draw solid faces
+        fov = self.fov.get()
+        
+        # Sort cubes by distance for proper rendering order
+        sorted_cubes = sorted(
+            [(cube, sum((c-p)**2 for c, p in zip(cube, self.pos))) 
+             for cube in self.cubes],
+            key=lambda x: x[1],
+            reverse=True
+        )
+        
+        # Render cubes
+        for cube, _ in sorted_cubes:
+            cache_key = (cube[0], cube[1], cube[2], self.pos[0], self.pos[1], self.pos[2])
+            
+            if cache_key not in self.cube_cache:
+                # Calculate new projections
+                pts = [self._to_camera((v[0]+cube[0], v[1]+cube[1], v[2]+cube[2])) for v in vertices]
+                pts2 = [project(p, factor, fov) if p[2]>0.05 else None for p in pts]
+                self.cube_cache[cache_key] = pts2
+            else:
+                pts2 = self.cube_cache[cache_key]
+            
+            # Draw faces
             for face in faces:
                 face_pts = [pts2[i] for i in face]
                 if all(p is not None for p in face_pts):
                     flat = [coord for p in face_pts for coord in p]
                     self.canvas.create_polygon(flat, fill='white', outline=self.light_fg, width=2, stipple='')
-            # Optionally, keep drawing edges for clarity (remove if not needed)
-            # for a,b in edges:
-            #     p1,p2 = pts2[a], pts2[b]
-            #     if p1 and p2:
-            #         self.canvas.create_line(p1[0],p1[1],p2[0],p2[1], fill=self.light_fg, width=2)
 
+        # Display info
         info = (
-            f"FPS: {self.fps:.1f}    "
+            f"FPS: {self.current_fps:.1f}    "
             f"Pos: {self.pos[0]:.1f},{self.pos[1]:.1f},{self.pos[2]:.1f}    "
-            f"Rot Y:{math.degrees(self.rot_y):.0f}° X:{math.degrees(self.rot_x):.0f}    "
-            f"Keys:{''.join(sorted(self.keys))}    "
-            f"FOV Zoom:{self.fov.get():.2f}    "
-            f"Vel:{self.vel[0]:.2f},{self.vel[1]:.2f},{self.vel[2]:.2f}    "
+            f"Rot Y:{math.degrees(self.rot_y):.0f}° X:{math.degrees(self.rot_x):.0f}°"
         )
         self.canvas.create_text(10,10,anchor='nw',fill=self.light_fg,font=('Consolas',12),text=info)
 
     def _loop(self):
-        now = time.time()
-        dt = now - self.last
-        self.last = now
-        self.fps = 1/dt if dt>0 else self.fps
+        current_time = time.time()
+        dt = current_time - self.last
+        self.last = current_time
 
         self._update(dt)
         self._draw()
-        self.root.after(16, self._loop)
+        
+        # Schedule next frame
+        delay = int(max(1, (self.frame_time - (time.time() - current_time)) * 1000))
+        self.root.after(delay, self._loop)
 
 if __name__ == '__main__':
     FPSApp(tk.Tk()).root.mainloop()
