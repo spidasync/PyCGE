@@ -18,8 +18,11 @@ edges = [
     (4,5),(5,7),(7,6),(6,4),
     (0,4),(1,5),(2,6),(3,7),
 ]
+faces = [
+    (0,1,3,2), (4,5,7,6), (0,1,5,4), (2,3,7,6), (0,2,6,4), (1,3,7,5)
+]
 
-def project(point, size, fov, distance=0.1):
+def project(point, size, fov, distance=0.001):
     x,y,z = point
     if distance + z == 0:
         return None
@@ -27,6 +30,11 @@ def project(point, size, fov, distance=0.1):
     return (x*factor + CENTER_X, -y*factor + CENTER_Y)
 
 class FPSApp:
+    # Minecraft-like player dimensions
+    PLAYER_HEIGHT = 1.5  # Total height (like Minecraft)
+    PLAYER_WIDTH = 0.6   # Width (like Minecraft)
+    EYE_HEIGHT = 1.3     # Camera/eye position (like Minecraft)
+
     def __init__(self, root):
         self.root = root
         self.root.title("Untitled Game Engine")
@@ -42,7 +50,7 @@ class FPSApp:
         style.map('TButton', background=[('active', self.dark_bg)])
         
         # Settings variables
-        self.rot_sens = tk.DoubleVar(value=0.04)
+        self.rot_sens = tk.DoubleVar(value=0.05)
         self.move_speed = tk.DoubleVar(value=0.1)
         self.gravity = tk.DoubleVar(value=0.007)
         self.jump_strength = tk.DoubleVar(value=0.15)
@@ -68,10 +76,10 @@ class FPSApp:
         self.rot_x = 0
         self.keys = set()
         self.last = time.time()
-        self.fps = 0.0
+        self.fps = 0
 
         self.cubes = [
-            (0,0,0),(3,0,0),(-3,0,0),(5,5,5),
+            (0,0,0),(3,0,0),(-3,0,0),(2,1.5,2),
         ]
 
         root.bind("<KeyPress>", self._on_key)
@@ -99,6 +107,41 @@ class FPSApp:
     def _on_key(self, e): self.keys.add(e.keysym.lower())
     def _on_key_release(self, e): self.keys.discard(e.keysym.lower())
 
+    def _collides(self, pos):
+        px, py, pz = pos
+        hw = self.PLAYER_WIDTH / 2  # Half width
+        
+        # Note: py is at eye level, so we need to check the full body below it
+        feet_y = py - self.EYE_HEIGHT  # Convert eye level to feet position
+        head_y = feet_y + self.PLAYER_HEIGHT
+
+        # Check collision with each cube
+        for cx, cy, cz in self.cubes:
+            # Check X overlap
+            if abs(px - cx) > (0.5 + hw): continue
+            # Check Y overlap (from feet to head)
+            if feet_y >= cy + 0.5 or head_y <= cy - 0.5: continue
+            # Check Z overlap
+            if abs(pz - cz) > (0.5 + hw): continue
+            
+            return True
+        return False
+
+    def _check_ground(self):
+        # Convert eye position to feet position
+        feet_y = self.pos[1] - self.EYE_HEIGHT
+        
+        if feet_y <= 0:  # Check world floor
+            return True
+
+        # Check for cubes below feet
+        for cx, cy, cz in self.cubes:
+            if (abs(self.pos[0] - cx) <= 0.5 + self.PLAYER_WIDTH/2 and
+                abs(self.pos[2] - cz) <= 0.5 + self.PLAYER_WIDTH/2 and
+                abs(feet_y - (cy + 0.5)) < 0.1):  # Small threshold for ground detection
+                return True
+        return False
+
     def _update(self, dt):
         rs = self.rot_sens.get()
         ms = self.move_speed.get()
@@ -106,6 +149,7 @@ class FPSApp:
         j = self.jump_strength.get()
         vx = vz = 0
 
+        # Movement and rotation
         if 'left' in self.keys: self.rot_y += rs
         if 'right' in self.keys: self.rot_y -= rs
         if 'up' in self.keys: self.rot_x = min(math.pi/2, self.rot_x+rs)
@@ -117,17 +161,52 @@ class FPSApp:
         if 'a' in self.keys: vx -= cy*ms; vz -= sy*ms
         if 'd' in self.keys: vx += cy*ms; vz += sy*ms
 
-        if 'space' in self.keys and self.pos[1] <= 0.001 and self.vel[1] == 0:
+        # Try X movement
+        if not self._collides([self.pos[0]+vx, self.pos[1], self.pos[2]]):
+            self.pos[0] += vx
+            
+        # Try Z movement
+        if not self._collides([self.pos[0], self.pos[1], self.pos[2]+vz]):
+            self.pos[2] += vz
+
+        # Ground check
+        on_ground = self._check_ground()
+
+        # Jump only when on ground
+        if 'space' in self.keys and on_ground:
             self.vel[1] = j
 
+        # Apply gravity
         self.vel[1] -= g
-        self.pos[1] += self.vel[1]
-        if self.pos[1] < 0:
-            self.pos[1] = 0
-            self.vel[1] = 0
 
-        self.pos[0] += vx
-        self.pos[2] += vz
+        # Try vertical movement
+        new_pos = [self.pos[0], self.pos[1]+self.vel[1], self.pos[2]]
+        if not self._collides(new_pos):
+            self.pos[1] += self.vel[1]
+        else:
+            # If we hit something, stop vertical movement
+            self.vel[1] = 0
+            
+            # If we're falling, place us on top of the block
+            if self.vel[1] < 0:
+                # Find the highest cube we're colliding with
+                max_y = -float('inf')
+                for cx, cy, cz in self.cubes:
+                    if (abs(self.pos[0] - cx) <= 0.5 + self.PLAYER_WIDTH/2 and
+                        abs(self.pos[2] - cz) <= 0.5 + self.PLAYER_WIDTH/2):
+                        cube_top = cy + 0.5
+                        if cube_top > max_y:
+                            max_y = cube_top
+                
+                if max_y > -float('inf'):
+                    # Position the eyes at the correct height above the surface
+                    self.pos[1] = max_y + self.EYE_HEIGHT
+
+        # World floor collision
+        feet_y = self.pos[1] - self.EYE_HEIGHT
+        if feet_y < 0:
+            self.pos[1] = self.EYE_HEIGHT  # Place eyes at correct height above ground
+            self.vel[1] = 0
 
     def _to_camera(self, pt):
         dx,dy,dz = pt[0]-self.pos[0], pt[1]-self.pos[1], pt[2]-self.pos[2]
@@ -145,10 +224,17 @@ class FPSApp:
         for cube in self.cubes:
             pts = [self._to_camera((v[0]+cube[0], v[1]+cube[1], v[2]+cube[2])) for v in vertices]
             pts2 = [project(p, factor, self.fov.get()) if p[2]>0.05 else None for p in pts]
-            for a,b in edges:
-                p1,p2 = pts2[a], pts2[b]
-                if p1 and p2:
-                    self.canvas.create_line(p1[0],p1[1],p2[0],p2[1], fill=self.light_fg, width=2)
+            # Draw solid faces
+            for face in faces:
+                face_pts = [pts2[i] for i in face]
+                if all(p is not None for p in face_pts):
+                    flat = [coord for p in face_pts for coord in p]
+                    self.canvas.create_polygon(flat, fill='white', outline=self.light_fg, width=2, stipple='')
+            # Optionally, keep drawing edges for clarity (remove if not needed)
+            # for a,b in edges:
+            #     p1,p2 = pts2[a], pts2[b]
+            #     if p1 and p2:
+            #         self.canvas.create_line(p1[0],p1[1],p2[0],p2[1], fill=self.light_fg, width=2)
 
         info = (
             f"FPS: {self.fps:.1f}    "
