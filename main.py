@@ -29,7 +29,7 @@ def project(point, size, fov, distance=0.1):
 class FPSApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Modern FPS Engine")
+        self.root.title("Untitled Game Engine")
 
         # Dark style
         self.dark_bg = "#000000"
