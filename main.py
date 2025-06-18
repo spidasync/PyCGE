@@ -298,3 +298,8 @@ class FPSApp:
             self.last_frame = current_time
 
         self.root.after(1, self._game_loop)
+
+if __name__ == '__main__':
+    root = tk.Tk()
+    app = FPSApp(root)
+    root.mainloop()
