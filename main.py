@@ -22,7 +22,7 @@ class CubeGeometry:
         (-1,0,0), (1,0,0), (0,-1,0), (0,1,0), (0,0,-1), (0,0,1)
     ]
 
-def project(point, size, fov, distance=0.001):
+def project(point, size, fov, distance=0.0001):
     x,y,z = point
     if distance + z <= 0.001:  # Avoid division by near-zero
         return None
@@ -33,7 +33,7 @@ class FPSApp:
     PLAYER_HEIGHT = 1.5
     PLAYER_WIDTH = 0.6
     EYE_HEIGHT = 1.3
-    TICK_RATE = 12  # Physics updates per second
+    TICK_RATE = 6  # Physics updates per second
     MAX_FPS = 60    # Maximum render FPS
     FRAME_TIME = 1.0 / MAX_FPS
     DEFAULT_RENDER_DISTANCE = 20.0  # Default render distance in game units
@@ -274,12 +274,8 @@ class FPSApp:
             f"Rot Y:{math.degrees(self.rot_y):.0f}° X:{math.degrees(self.rot_x):.0f}°      "
             f"Render Dist: {self.render_distance.get():.1f}    "
             f"FOV: {self.fov.get():.2f}      "
-            f"Gravity: {self.gravity.get():.3f}      "
-            f"Jump: {self.jump_strength.get():.2f}      "
-            f"Move Speed: {self.move_speed.get():.2f}      "
-            f"Rot Sens: {self.rot_sens.get():.3f}      "
         )
-        self.canvas.create_text(10,10,anchor='nw',fill=self.light_fg,font=('Consolas',12),text=info)
+        self.canvas.create_text(10,10,anchor='nw',fill=self.light_fg,font=('Consolas',11),text=info)
 
     def _game_loop(self):
         current_time = time.time()
