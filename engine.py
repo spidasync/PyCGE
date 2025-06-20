@@ -1,74 +1,66 @@
 import tkinter as tk
-from tkinter import ttk, simpledialog, messagebox
+from tkinter import ttk
 import math
 import time
-import socket
-import json
-import threading
 
 class GameEngine:
-    def __init__(self, config=None):
-        # Default configuration
-        self.config = {
-            'window_title': "PyCGE Engine",
-            'window_width': 1280,
-            'window_height': 720,
-            'background_color': 'black',
-            'debug_enabled': True,
-            'multiplayer_enabled': False,
-            'server_ip': 'localhost',
-            'server_port': 5555,
-            'physics': {
-                'gravity': 0.65,
-                'jump_force': -14.5,
-                'move_speed': 6.5,
-                'friction': 0.8
-            },
-            'camera': {
-                'enabled': True,
-                'smoothness': 0.1
-            },
-            'player': {
-                'width': 30,
-                'height': 30,
-                'color': 'red',
-                'start_x': 640,
-                'start_y': 360
-            }
-        }
+    def __init__(self, config=None, on_collision=None):
+        self.config = config
+        self.on_collision = on_collision
+        # Initial position for reset
+        self.initial_x = 400
+        self.initial_y = 300
         
-        # Update config with user settings
-        if config:
-            self._update_config(config)
+        self.root = tk.Tk()
+        self.root.title("PyCGE 2D Sample Engine")
         
-        # Initialize player properties
-        self.player = {
-            'x': self.config['player']['start_x'],
-            'y': self.config['player']['start_y'],
-            'width': self.config['player']['width'],
-            'height': self.config['player']['height'],
-            'velocity_x': 0,
-            'velocity_y': 0,
-            'on_ground': False,
-            'color': self.config['player']['color']
-        }
+        # Configure style for dark theme
+        style = ttk.Style()
+        style.configure("Custom.Horizontal.TScale",
+                       troughcolor='#2a2a2a',
+                       slidercolor='#ffffff',
+                       background='#1a1a1a')
+
+        # Create main container with dark theme
+        self.main_container = tk.Frame(self.root, bg='#1a1a1a')
+        self.main_container.pack(fill=tk.BOTH, expand=True)
         
-        self.platforms = []
-        self.other_players = {}
-        self.network_running = False
+        # Create game frame (left side)
+        self.game_frame = tk.Frame(self.main_container, bg='#1a1a1a')
+        self.game_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
-        # Setup multiplayer if enabled
-        if self.config['multiplayer_enabled']:
-            self.setup_network()
+        # Set background and player color from config or use defaults
+        self.background_color = self.config.get('background_color', '#000000') if self.config else '#000000'
+        self.player_color = (self.config.get('player', {}).get('color', '#FF0000') if self.config else '#FF0000')
+
+        # Create canvas
+        self.canvas = tk.Canvas(self.game_frame, width=800, height=600, bg=self.background_color,
+                              highlightthickness=0)  # Remove canvas border
+        self.canvas.pack(side=tk.LEFT)
         
-        self._setup_window()
-        self._setup_input_handling()
+        # Create debug info frame at the top-left
+        self.debug_frame = tk.Frame(self.canvas, bg='black')
+        self.debug_frame.place(x=10, y=10)
         
-        # Physics properties from config
-        self.gravity = self.config['physics']['gravity']
-        self.jump_force = self.config['physics']['jump_force']
-        self.move_speed = self.config['physics']['move_speed']
-        self.friction = self.config['physics']['friction']
+        # Create horizontal debug info with modern font
+        self.fps_label = tk.Label(self.debug_frame, text="FPS: 0", 
+                                 bg='black', fg='white', 
+                                 font=('Helvetica', 12))
+        self.fps_label.pack(side=tk.LEFT, padx=(0, 15))
+        
+        self.pos_label = tk.Label(self.debug_frame, text="Pos: (0, 0)", 
+                                 bg='black', fg='white', 
+                                 font=('Helvetica', 12))
+        self.pos_label.pack(side=tk.LEFT, padx=(0, 15))
+        
+        self.vel_label = tk.Label(self.debug_frame, text="Vel: (0, 0)", 
+                                 bg='black', fg='white', 
+                                 font=('Helvetica', 12))
+        self.vel_label.pack(side=tk.LEFT)
+        
+        # FPS tracking
+        self.last_frame_time = time.time()
+        self.fps = 0
         
         # Camera properties
         self.camera = {
@@ -76,149 +68,92 @@ class GameEngine:
             'y': 0,
             'target_x': 0,
             'target_y': 0,
-            'smoothness': self.config['camera']['smoothness']
+            'smoothness': 0.1
         }
         
-        # FPS tracking
-        self.last_frame_time = time.time()
-        self.fps = 0
+        # Player properties
+        self.player = {
+            'x': self.initial_x,
+            'y': self.initial_y,
+            'width': 30,
+            'height': 30,
+            'velocity_x': 0,
+            'velocity_y': 0,
+            'on_ground': False
+        }
+        # If config provides player size, override defaults
+        if self.config and 'player' in self.config:
+            self.player['width'] = self.config['player'].get('width', self.player['width'])
+            self.player['height'] = self.config['player'].get('height', self.player['height'])
         
-        # Custom update function
-        self.custom_update = None
+        # Platforms (x, y, width, height, id)
+        self.platforms = []
+        if self.config and 'platforms' in self.config:
+            for plat in self.config['platforms']:
+                self.platforms.append(tuple(plat))
+        
+        # Physics properties
+        self.gravity = 0.5
+        self.jump_force = -12
+        self.move_speed = 5
+        self.friction = 0.8
     
-    def _update_config(self, new_config):
-        """Deep update of configuration dictionary"""
-        def update_dict(d, u):
-            for k, v in u.items():
-                if isinstance(v, dict) and k in d:
-                    d[k] = update_dict(d[k], v)
-                else:
-                    d[k] = v
-            return d
-        self.config = update_dict(self.config, new_config)
-    
-    def _setup_window(self):
-        """Setup the game window and UI elements"""
-        self.root = tk.Tk()
-        self.root.title(self.config['window_title'])
-        
-        # Create main container
-        self.main_container = tk.Frame(self.root, bg='#1a1a1a')
-        self.main_container.pack(fill=tk.BOTH, expand=True)
-        
-        # Create game frame
-        self.game_frame = tk.Frame(self.main_container, bg='#1a1a1a')
-        self.game_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # Create canvas
-        self.canvas = tk.Canvas(
-            self.game_frame,
-            width=self.config['window_width'],
-            height=self.config['window_height'],
-            bg=self.config['background_color'],
-            highlightthickness=0
-        )
-        self.canvas.pack()
-        
-        if self.config['debug_enabled']:
-            self._setup_debug()
-    
-    def _setup_debug(self):
-        """Setup debug information display"""
-        self.debug_frame = tk.Frame(self.canvas, bg='black')
-        self.debug_frame.place(x=10, y=10)
-        
-        self.fps_label = tk.Label(
-            self.debug_frame,
-            text="FPS: 0",
-            bg='black', fg='white',
-            font=('Consolas', 12)
-        )
-        self.fps_label.pack(side=tk.LEFT, padx=(0, 15))
-        
-        self.pos_label = tk.Label(
-            self.debug_frame,
-            text="Pos: (0, 0)",
-            bg='black', fg='white',
-            font=('Consolas', 12)
-        )
-        self.pos_label.pack(side=tk.LEFT, padx=(0, 15))
-        
-        self.vel_label = tk.Label(
-            self.debug_frame,
-            text="Vel: (0, 0)",
-            bg='black', fg='white',
-            font=('Consolas', 12)
-        )
-        self.vel_label.pack(side=tk.LEFT)
-    
-    def _setup_input_handling(self):
-        """Setup keyboard input handling"""
+        # Input handling
         self.keys = {'left': False, 'right': False, 'up': False}
-        self.root.bind('<KeyPress>', self._key_press)
-        self.root.bind('<KeyRelease>', self._key_release)
-    
-    def setup_network(self):
-        """Setup multiplayer networking"""
-        try:
-            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-            self.sock.connect((self.config['server_ip'], self.config['server_port']))
-            
-            self.client_id = int(self.sock.recv(1024).decode())
-            self.sock.send(f"ACK{self.client_id}".encode())
-            print(f"Connected to server with ID: {self.client_id}")
-            
-            self.network_running = True
-            self.network_thread = threading.Thread(target=self._network_update)
-            self.network_thread.daemon = True
-            self.network_thread.start()
-        except Exception as e:
-            print(f"Failed to connect to server: {e}")
-            messagebox.showerror("Connection Error", 
-                               f"Failed to connect to server: {e}")
-            self.sock = None
-    
-    def add_platform(self, x, y, width, height, color='green'):
-        """Add a platform to the game"""
-        self.platforms.append({
-            'x': x,
-            'y': y,
-            'width': width,
-            'height': height,
-            'color': color
-        })
-    
-    def set_custom_update(self, func):
-        """Set a custom update function to be called each frame"""
-        self.custom_update = func
-    
-    def world_to_screen(self, x, y):
-        """Convert world coordinates to screen coordinates"""
-        if self.config['camera']['enabled']:
-            return x - self.camera['x'], y - self.camera['y']
-        return x, y
-    
-    def _update_camera(self):
-        """Update camera position to follow player"""
-        if not self.config['camera']['enabled']:
-            return
-            
-        self.camera['target_x'] = (
-            self.player['x'] - self.config['window_width']/2 + self.player['width']/2
-        )
-        self.camera['target_y'] = (
-            self.player['y'] - self.config['window_height']/2 + self.player['height']/2
-        )
+        self.root.bind('<KeyPress>', self.key_press)
+        self.root.bind('<KeyRelease>', self.key_release)
         
+        # Special platform ID
+        self.special_pid = self.config.get('special_pid', 1) if self.config else 1
+        
+        # Start game loop
+        self.update()
+        self.root.mainloop()
+    
+    def create_slider(self, name, min_val, max_val, default, callback):
+        frame = tk.Frame(self.controls_container, bg='#1a1a1a')
+        frame.pack(fill=tk.X, pady=10)
+        
+        label = tk.Label(frame, text=name, bg='#1a1a1a', fg='white',
+                        font=('Helvetica', 11))
+        label.pack(anchor=tk.W)
+        
+        value_label = tk.Label(frame, text=f"{default:.2f}", bg='#1a1a1a', fg='#888888',
+                              font=('Helvetica', 10))
+        value_label.pack(anchor=tk.E)
+        
+        def update_callback(value):
+            value_label.config(text=f"{float(value):.2f}")
+            callback(value)
+        
+        slider = ttk.Scale(frame, from_=min_val, to=max_val, orient=tk.HORIZONTAL,
+                         value=default, command=update_callback, style="Custom.Horizontal.TScale")
+        slider.pack(fill=tk.X, pady=(5, 0))
+    
+    def update_value(self, attribute, value):
+        value = float(value)
+        if attribute == 'gravity':
+            self.gravity = value
+        elif attribute == 'jump_force':
+            self.jump_force = value
+        elif attribute == 'move_speed':
+            self.move_speed = value
+        elif attribute == 'friction':
+            self.friction = value
+    
+    def update_camera(self):
+        # Set camera target to center on player
+        self.camera['target_x'] = self.player['x'] - 800/2 + self.player['width']/2
+        self.camera['target_y'] = self.player['y'] - 600/2 + self.player['height']/2
+        
+        # Smooth camera movement
         self.camera['x'] += (self.camera['target_x'] - self.camera['x']) * self.camera['smoothness']
         self.camera['y'] += (self.camera['target_y'] - self.camera['y']) * self.camera['smoothness']
     
-    def _update_debug_info(self):
-        """Update debug information display"""
-        if not self.config['debug_enabled']:
-            return
-            
+    def world_to_screen(self, x, y):
+        return x - self.camera['x'], y - self.camera['y']
+    
+    def update_debug_info(self):
         current_time = time.time()
         dt = current_time - self.last_frame_time
         self.last_frame_time = current_time
@@ -230,30 +165,23 @@ class GameEngine:
         self.pos_label.config(text=f"Pos: ({self.player['x']:.1f}, {self.player['y']:.1f})")
         self.vel_label.config(text=f"Vel: ({self.player['velocity_x']:.1f}, {self.player['velocity_y']:.1f})")
     
-    def _key_press(self, event):
-        key = event.keysym.lower()
-        if key == 'a':
-            self.keys['left'] = True
-        elif key == 'd':
-            self.keys['right'] = True
-        elif key == 'w':
-            self.keys['up'] = True
-        elif key == 'r':
-            self.reset_position()
-    
-    def _key_release(self, event):
-        key = event.keysym.lower()
-        if key == 'a':
-            self.keys['left'] = False
-        elif key == 'd':
-            self.keys['right'] = False
-        elif key == 'w':
-            self.keys['up'] = False
+    def check_collision(self, x, y):
+        player_rect = (x, y, self.player['width'], self.player['height'])
+        for platform in self.platforms:
+            px, py, pw, ph = platform[:4]
+            pid = platform[4] if len(platform) > 4 else None
+            if (x < px + pw and
+                x + player_rect[2] > px and
+                y < py + ph and
+                y + player_rect[3] > py):
+                if self.on_collision:
+                    self.on_collision(pid)
+                return True
+        return False
     
     def reset_position(self):
-        """Reset player position and camera"""
-        self.player['x'] = self.config['player']['start_x']
-        self.player['y'] = self.config['player']['start_y']
+        self.player['x'] = self.initial_x
+        self.player['y'] = self.initial_y
         self.player['velocity_x'] = 0
         self.player['velocity_y'] = 0
         self.camera['x'] = 0
@@ -261,121 +189,20 @@ class GameEngine:
         self.camera['target_x'] = 0
         self.camera['target_y'] = 0
     
-    def check_collision(self, x, y):
-        """Check for collision between player and platforms"""
-        player_rect = (x, y, self.player['width'], self.player['height'])
-        for platform in self.platforms:
-            if (x < platform['x'] + platform['width'] and
-                x + player_rect[2] > platform['x'] and
-                y < platform['y'] + platform['height'] and
-                y + player_rect[3] > platform['y']):
-                return True
-        return False    
+    def add_platform(self, x, y, width, height, pid=None):
+        if pid is not None:
+            self.platforms.append((x, y, width, height, pid))
+        else:
+            self.platforms.append((x, y, width, height))
     
-    def _network_update(self):
-        """Handle network updates for multiplayer"""
-        if not self.config['multiplayer_enabled']:
-            return
-            
-        last_send_time = 0
-        send_interval = 1.0 / 60  # 60Hz update rate
+    def update(self):
+        # Update camera position
+        self.update_camera()
         
-        while self.network_running and self.sock:
-            current_time = time.time()
-            
-            try:
-                if current_time - last_send_time >= send_interval:
-                    player_data = {
-                        'x': self.player['x'],
-                        'y': self.player['y'],
-                        'velocity_x': self.player['velocity_x'],
-                        'velocity_y': self.player['velocity_y'],
-                        'on_ground': self.player['on_ground'],
-                        'color': self.player['color'],
-                        'width': self.player['width'],
-                        'height': self.player['height']
-                    }
-                    message = json.dumps(player_data) + '\n'  # Add newline as message delimiter
-                    self.sock.send(message.encode())
-                    last_send_time = current_time
-                
-                # Receive and process data
-                self.sock.setblocking(False)
-                try:
-                    data = self.sock.recv(4096).decode()  # Increased buffer size
-                    if data:
-                        # Split received data by newlines in case multiple messages arrived
-                        messages = data.strip().split('\n')
-                        for message in messages:
-                            if message:
-                                try:
-                                    all_players = json.loads(message)
-                                    self.other_players = {
-                                        int(pid): pdata for pid, pdata in all_players.items()
-                                        if int(pid) != self.client_id
-                                    }
-                                except json.JSONDecodeError as e:
-                                    print(f"JSON decode error: {e}")
-                                    continue
-                except BlockingIOError:
-                    pass
-                except Exception as e:
-                    print(f"Receive error: {e}")
-                finally:
-                    self.sock.setblocking(True)
-                
-            except Exception as e:
-                print(f"Network error: {e}")
-                self.sock = None
-                break
-            
-            time.sleep(0.001)
-    
-    def _draw_platforms(self):
-        """Draw all platforms"""
-        for platform in self.platforms:
-            screen_x, screen_y = self.world_to_screen(platform['x'], platform['y'])
-            self.canvas.create_rectangle(
-                screen_x, screen_y,
-                screen_x + platform['width'],
-                screen_y + platform['height'],
-                fill=platform['color']
-            )
-    
-    def _draw_players(self):
-        """Draw current player and other players"""
-        # Draw current player
-        screen_x, screen_y = self.world_to_screen(self.player['x'], self.player['y'])
-        self.canvas.create_rectangle(
-            screen_x, screen_y,
-            screen_x + self.player['width'],
-            screen_y + self.player['height'],
-            fill=self.player['color'],
-            outline='white'
-        )
-        
-        # Draw other players in multiplayer mode
-        if self.config['multiplayer_enabled']:
-            for pid, data in self.other_players.items():
-                try:
-                    screen_x, screen_y = self.world_to_screen(data['x'], data['y'])
-                    self.canvas.create_rectangle(
-                        screen_x, screen_y,
-                        screen_x + data['width'],
-                        screen_y + data['height'],
-                        fill=data['color'],
-                        outline='white'
-                    )
-                except KeyError as e:
-                    print(f"Missing data for player {pid}: {e}")
-                    continue
-    
-    def _update_physics(self):
-        """Update player physics"""
-        # Handle horizontal movement
-        if self.keys['left']:
+        # Handle horizontal movement (changed to WASD)
+        if self.keys['left']:  # A key
             self.player['velocity_x'] = -self.move_speed
-        elif self.keys['right']:
+        elif self.keys['right']:  # D key
             self.player['velocity_x'] = self.move_speed
         else:
             self.player['velocity_x'] *= self.friction
@@ -384,7 +211,7 @@ class GameEngine:
         if not self.player['on_ground']:
             self.player['velocity_y'] += self.gravity
         
-        # Handle jumping
+        # Handle jumping (W key)
         if self.keys['up'] and self.player['on_ground']:
             self.player['velocity_y'] = self.jump_force
             self.player['on_ground'] = False
@@ -407,148 +234,49 @@ class GameEngine:
             if self.player['velocity_y'] > 0:
                 self.player['on_ground'] = True
             self.player['velocity_y'] = 0
-    
-    def _update(self):
-        """Main update loop"""
-        # Update camera position
-        self._update_camera()
         
-        # Update physics
-        self._update_physics()
-        
-        # Call custom update function if set
-        if self.custom_update:
-            self.custom_update(self)
-        
-        # Clear and redraw everything
+        # Clear and redraw
         self.canvas.delete('all')
+        self.canvas.config(bg=self.background_color)
+        # Draw platforms with camera offset
+        for platform in self.platforms:
+            screen_x, screen_y = self.world_to_screen(platform[0], platform[1])
+            self.canvas.create_rectangle(
+                screen_x, screen_y,
+                screen_x + platform[2],
+                screen_y + platform[3],
+                fill="#205D06", outline="#FFFFFF"
+            )
+        # Draw player with camera offset
+        player_screen_x, player_screen_y = self.world_to_screen(self.player['x'], self.player['y'])
+        self.canvas.create_rectangle(
+            player_screen_x,
+            player_screen_y,
+            player_screen_x + self.player['width'],
+            player_screen_y + self.player['height'],
+            fill=self.player_color
+        )
         
-        # Draw game elements
-        self._draw_platforms()
-        self._draw_players()
-        
-        # Update debug info
-        self._update_debug_info()
+        # Update debug information
+        self.update_debug_info()
         
         # Schedule next update
-        self.root.after(16, self._update)  # ~60 FPS
-    
-    def run(self):
-        """Start the game loop"""
-        self._update()
-        self.root.mainloop()
+        self.root.after(16, self.update)  # ~60 FPS
 
-class Server:
-    def __init__(self, host='0.0.0.0', port=5555):
-        self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.server.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-        self.server.bind((host, port))
-        self.server.listen()
-        
-        self.clients = {}
-        self.players = {}
-        self.client_counter = 0
-        self.running = True
-        
-        print(f"Server started on {host}:{port}")
-        print(f"Local IP: {socket.gethostbyname(socket.gethostname())}")
-    
-    def start(self):
-        while self.running:
-            try:
-                conn, addr = self.server.accept()
-                client_id = self.client_counter
-                self.client_counter += 1
-                
-                thread = threading.Thread(target=self.handle_client, args=(conn, client_id))
-                thread.daemon = True
-                thread.start()
-                
-                print(f"New connection from {addr}, assigned ID: {client_id}")
-            except Exception as e:
-                print(f"Error accepting connection: {e}")
-                continue
-
-    def handle_client(self, conn, client_id):
-        try:
-            self.clients[client_id] = conn
+    def key_press(self, event):
+        if event.keysym.lower() == 'a':
+            self.keys['left'] = True
+        elif event.keysym.lower() == 'd':
+            self.keys['right'] = True
+        elif event.keysym == 'space' or event.keysym.lower() == 'w':  # Both space and W for jump
+            self.keys['up'] = True
+        elif event.keysym.lower() == 'r':  # Reset position when R is pressed
+            self.reset_position()
             
-            # Send client ID with newline delimiter
-            conn.send((str(client_id) + '\n').encode())
-            ack = conn.recv(1024).decode().strip()
-            if ack != f"ACK{client_id}":
-                raise Exception("Client failed to acknowledge ID")
-            
-            self.players[client_id] = {
-                'x': 640,
-                'y': 360,
-                'velocity_x': 0,
-                'velocity_y': 0,
-                'on_ground': False,
-                'width': 30,
-                'height': 30,
-                'color': 'red' if client_id == 0 else 'blue'
-            }
-            
-            self.broadcast_state()
-            
-            # Buffer for incomplete messages
-            buffer = ""
-            
-            while self.running:
-                try:
-                    data = conn.recv(4096).decode()  # Increased buffer size
-                    if not data:
-                        break
-                    
-                    # Add received data to buffer
-                    buffer += data
-                    
-                    # Process complete messages
-                    while '\n' in buffer:
-                        message, buffer = buffer.split('\n', 1)
-                        if message:
-                            try:
-                                player_data = json.loads(message)
-                                self.players[client_id].update(player_data)
-                                self.broadcast_state()
-                            except json.JSONDecodeError as e:
-                                print(f"Invalid JSON from client {client_id}: {e}")
-                                continue
-                    
-                except Exception as e:
-                    print(f"Error handling client {client_id}: {e}")
-                    break
-        except Exception as e:
-            print(f"Client {client_id} error: {e}")
-        finally:
-            print(f"Client {client_id} disconnected")
-            if client_id in self.clients:
-                del self.clients[client_id]
-            if client_id in self.players:
-                del self.players[client_id]
-            conn.close()
-
-    def broadcast_state(self):
-        state = json.dumps(self.players) + '\n'  # Add newline as message delimiter
-        disconnected = []
-        
-        for cid, client_conn in self.clients.items():
-            try:
-                client_conn.send(state.encode())
-            except:
-                print(f"Failed to send to client {cid}")
-                disconnected.append(cid)
-        
-        for cid in disconnected:
-            if cid in self.clients:
-                del self.clients[cid]
-            if cid in self.players:
-                del self.players[cid]
-    
-    def stop(self):
-        self.running = False
-        for conn in self.clients.values():
-            conn.close()
-        self.server.close()
+    def key_release(self, event):
+        if event.keysym.lower() == 'a':
+            self.keys['left'] = False
+        elif event.keysym.lower() == 'd':
+            self.keys['right'] = False
+        elif event.keysym == 'space' or event.keysym.lower() == 'w':  # Both space and W for jump
+            self.keys['up'] = False
