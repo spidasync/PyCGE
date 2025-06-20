@@ -92,6 +92,12 @@ class GameEngine:
             for plat in self.config['platforms']:
                 self.platforms.append(tuple(plat))
         
+        # Networking: remote player
+        self.net = self.config.get('net', None)
+        self.remote_player = {'x': 0, 'y': 0, 'width': 30, 'height': 30, 'id': 'Peer'}
+        self.player_id = self.config.get('player_id', 'You')
+        self.remote_id = self.config.get('remote_id', 'Peer')
+
         # Physics properties
         self.gravity = 0.5
         self.jump_force = -12
@@ -196,6 +202,15 @@ class GameEngine:
             self.platforms.append((x, y, width, height))
     
     def update(self):
+        # Networking: send my position, receive remote
+        if self.net:
+            self.net.send({'x': self.player['x'], 'y': self.player['y'], 'id': self.player_id})
+            remote = self.net.get_latest()
+            if remote:
+                self.remote_player['x'] = remote.get('x', self.remote_player['x'])
+                self.remote_player['y'] = remote.get('y', self.remote_player['y'])
+                self.remote_player['id'] = remote.get('id', self.remote_id)
+        
         # Update camera position
         self.update_camera()
         
@@ -256,6 +271,32 @@ class GameEngine:
             player_screen_y + self.player['height'],
             fill=self.player_color
         )
+        # Draw player ID above head
+        self.canvas.create_text(
+            player_screen_x + self.player['width'] / 2,
+            player_screen_y - 10,
+            text=self.player_id,
+            fill='white',
+            font=('Helvetica', 12, 'bold')
+        )
+        # Draw remote player
+        if self.net:
+            rx, ry = self.world_to_screen(self.remote_player['x'], self.remote_player['y'])
+            self.canvas.create_rectangle(
+                rx,
+                ry,
+                rx + self.remote_player['width'],
+                ry + self.remote_player['height'],
+                fill="#00A2FF"
+            )
+            # Draw remote player ID above head
+            self.canvas.create_text(
+                rx + self.remote_player['width'] / 2,
+                ry - 10,
+                text=self.remote_player['id'],
+                fill='#00A2FF',
+                font=('Helvetica', 12, 'bold')
+            )
         
         # Update debug information
         self.update_debug_info()
