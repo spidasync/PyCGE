@@ -1,7 +1,7 @@
 
 # PyCGE (Python Crosshair Games Engine)
 
-**A simple 2D networked game development engine written from scratch that utilises the basic tkinter and math python libraries to 2D render objects.**
+**A simple 2D  game development engine written from scratch that utilises the basic tkinter and math python libraries to 2D render objects.**
 
 <img width="1438" alt="Screenshot 2025-06-20 at 1 18 07 pm" src="https://github.com/user-attachments/assets/2bce1940-fc5e-4b3d-90f7-91b1210d0155" />
 
