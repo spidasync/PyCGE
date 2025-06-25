@@ -3,7 +3,7 @@
 
 **A simple 2D  game development engine written from scratch that utilises the basic tkinter and math python libraries to 2D render objects.**
 
-<img width="1438" alt="Screenshot 2025-06-20 at 1 18 07 pm" src="https://github.com/user-attachments/assets/2bce1940-fc5e-4b3d-90f7-91b1210d0155" />
+![Screenshot 2025-06-25 at 11 52 21 am](https://github.com/user-attachments/assets/cf78599c-7a45-4037-b8c9-b274b0cc033a)
 
 # How it works
 
