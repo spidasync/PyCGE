@@ -5,7 +5,7 @@
 
 ** COMING SOON **
 
-<img width="1432" alt="Screenshot 2025-06-25 at 11 57 00 am" src="https://github.com/user-attachments/assets/e93be24b-e437-49be-ae77-ae731501c399" />
+<img width="1432" alt="Screenshot 2025-06-26 at 1 57 34 pm" src="https://github.com/user-attachments/assets/80e37e67-17fb-47b5-acac-f8a7a6bd46fc" />
 
 # How to use
 
